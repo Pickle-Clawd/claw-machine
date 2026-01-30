@@ -1033,8 +1033,8 @@ export default function ClawMachine() {
         }
 
         if (closestPrize) {
-          // 40% chance the claw fails to grip — just like a real arcade machine!
-          if (Math.random() < 0.6) {
+          // 20% chance the claw fails to grip
+          if (Math.random() < 0.8) {
             // Grab succeeds!
             closestPrize.grabbed = true;
             claw.grabbedPrize = closestPrize;
@@ -1064,8 +1064,8 @@ export default function ClawMachine() {
     if (claw.returning) {
       claw.y -= RETURN_SPEED * dt;
 
-      // 1% chance per frame to drop prize during return (like a real machine)
-      if (claw.grabbedPrize && Math.random() < 0.01) {
+      // 0.3% chance per frame to drop prize during return
+      if (claw.grabbedPrize && Math.random() < 0.003) {
         const dropped = claw.grabbedPrize;
         dropped.grabbed = false;
         dropped.grounded = false;
