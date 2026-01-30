@@ -20,23 +20,29 @@ function generateId() {
 
 function generatePrizes(ml: number, mr: number, mb: number): Prize[] {
   const prizes: Prize[] = [];
-  const count = 14;
+  const count = 10;
+  const floorY = mb - 12 - PRIZE_RADIUS;
+  const usableWidth = mr - ml - 80;
+  
   for (let i = 0; i < count; i++) {
     const type = PRIZE_TYPES[Math.floor(Math.random() * PRIZE_TYPES.length)];
-    // Spawn prizes spread across the area — they fall and settle quickly
+    // Spawn in a grid-like pattern on the floor so they don't overlap
+    const col = i % 5;
+    const row = Math.floor(i / 5);
+    const spacing = usableWidth / 5;
     prizes.push({
       id: generateId(),
       type,
-      x: ml + 40 + Math.random() * (mr - ml - 80),
-      y: mb - 100 - Math.random() * 80,
-      vx: (Math.random() - 0.5) * 0.5,
-      vy: Math.random() * 0.5,
+      x: ml + 40 + col * spacing + (Math.random() - 0.5) * 10,
+      y: floorY - row * (PRIZE_RADIUS * 2.5) - Math.random() * 5,
+      vx: 0,
+      vy: 0,
       width: 32,
       height: 32,
-      rotation: (Math.random() - 0.5) * Math.PI * 2,
-      angularVel: (Math.random() - 0.5) * 0.03,
+      rotation: (Math.random() - 0.5) * 0.5,
+      angularVel: 0,
       grabbed: false,
-      grounded: false,
+      grounded: true,
       mass: 0.8 + Math.random() * 0.4,
       restitution: 0.0,
       glowPhase: Math.random() * Math.PI * 2,
