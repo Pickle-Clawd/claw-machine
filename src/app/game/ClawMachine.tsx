@@ -271,31 +271,17 @@ function physicsStep(
   for (const prize of prizes) {
     if (prize.grabbed) continue;
 
-    // Grounded objects stay at rest unless disturbed or floating
+    // Only stay grounded if actually on the floor
     if (prize.grounded) {
       const floorY = mb - 12 - PRIZE_RADIUS;
-      const isNearFloor = prize.y >= floorY - 5;
-      // Check if supported by another prize below
-      const isSupported = isNearFloor || prizes.some(other => 
-        other !== prize && !other.grabbed &&
-        Math.abs(other.x - prize.x) < PRIZE_RADIUS * 2 &&
-        other.y > prize.y &&
-        other.y - prize.y < PRIZE_RADIUS * 2.5
-      );
-      
-      if (!isSupported) {
-        // Floating! Wake up and fall
+      if (prize.y < floorY - 2) {
+        // Not on floor — wake up and fall
         prize.grounded = false;
       } else {
-        const speed = Math.sqrt(prize.vx * prize.vx + prize.vy * prize.vy);
-        if (speed > 3.0) {
-          prize.grounded = false;
-        } else {
-          prize.vx = 0;
-          prize.vy = 0;
-          prize.angularVel = 0;
-          continue;
-        }
+        prize.vx = 0;
+        prize.vy = 0;
+        prize.angularVel = 0;
+        continue;
       }
     }
 
@@ -307,9 +293,8 @@ function physicsStep(
     prize.vy *= 0.98;
     prize.angularVel *= 0.9;
 
-    // Kill micro-velocities aggressively
-    if (Math.abs(prize.vx) < 0.3) prize.vx = 0;
-    if (Math.abs(prize.vy) < 0.3 && prize.vy > 0) prize.vy = 0;
+    // Kill micro-velocities (but never kill downward velocity — let things fall)
+    if (Math.abs(prize.vx) < 0.2) prize.vx = 0;
     if (Math.abs(prize.angularVel) < 0.03) prize.angularVel = 0;
 
     // Integrate position
