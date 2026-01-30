@@ -38,7 +38,7 @@ function generatePrizes(ml: number, mr: number, mb: number): Prize[] {
       grabbed: false,
       grounded: false,
       mass: 0.8 + Math.random() * 0.4,
-      restitution: 0.05 + Math.random() * 0.05,
+      restitution: 0.0,
       glowPhase: Math.random() * Math.PI * 2,
     });
   }
@@ -159,11 +159,11 @@ function resolvePrizePrizeCollision(a: Prize, b: Prize) {
   b.vx += (j / b.mass) * nx;
   b.vy += (j / b.mass) * ny;
 
-  // Post-collision damping — absorb energy on contact
-  a.vx *= 0.85;
-  a.vy *= 0.85;
-  b.vx *= 0.85;
-  b.vy *= 0.85;
+  // Post-collision damping — absorb most energy on contact
+  a.vx *= 0.5;
+  a.vy *= 0.5;
+  b.vx *= 0.5;
+  b.vy *= 0.5;
 
   // Tangential friction impulse (makes objects spin on contact)
   const tangentX = -ny;
@@ -230,25 +230,16 @@ function applyBoundaries(prize: Prize, ml: number, mr: number, mb: number) {
   if (prize.y > floorY - PRIZE_RADIUS) {
     prize.y = floorY - PRIZE_RADIUS;
     if (prize.vy > 0) {
-      // Only bounce if impact velocity is significant, otherwise just stop
-      if (prize.vy > 1.5) {
-        prize.vy = -prize.vy * prize.restitution;
-      } else {
-        prize.vy = 0;
-      }
-      // Strong ground friction
-      prize.vx *= GROUND_FRICTION;
-      prize.angularVel += prize.vx * 0.01;
-      prize.angularVel *= 0.7;
-
-      // Sleep check — if barely moving, come to full rest
-      const speed = Math.abs(prize.vx) + Math.abs(prize.vy);
-      if (speed < VELOCITY_SLEEP_THRESHOLD) {
-        prize.vy = 0;
-        prize.vx *= 0.5;
-        prize.grounded = true;
-        if (Math.abs(prize.vx) < 0.1) prize.vx = 0;
-        if (Math.abs(prize.angularVel) < ANGULAR_SLEEP_THRESHOLD) prize.angularVel = 0;
+      // No bouncing — just stop on the floor
+      prize.vy = 0;
+      prize.vx *= 0.3;
+      prize.angularVel *= 0.3;
+      prize.grounded = true;
+      
+      // If barely moving horizontally, fully stop
+      if (Math.abs(prize.vx) < 1.0) {
+        prize.vx = 0;
+        prize.angularVel = 0;
       }
     }
   }
@@ -256,19 +247,15 @@ function applyBoundaries(prize: Prize, ml: number, mr: number, mb: number) {
   // Left wall
   if (prize.x < leftWall) {
     prize.x = leftWall;
-    if (prize.vx < 0) {
-      prize.vx = Math.abs(prize.vx) > 1.5 ? -prize.vx * prize.restitution : 0;
-      prize.angularVel *= 0.7;
-    }
+    prize.vx = 0;
+    prize.angularVel *= 0.3;
   }
 
   // Right wall
   if (prize.x > rightWall) {
     prize.x = rightWall;
-    if (prize.vx > 0) {
-      prize.vx = Math.abs(prize.vx) > 1.5 ? -prize.vx * prize.restitution : 0;
-      prize.angularVel *= 0.7;
-    }
+    prize.vx = 0;
+    prize.angularVel *= 0.3;
   }
 }
 
@@ -284,30 +271,12 @@ function physicsStep(
   for (const prize of prizes) {
     if (prize.grabbed) continue;
 
-    // Wake up grounded objects if they have velocity (e.g. from collision)
-    if (prize.grounded && (Math.abs(prize.vx) > VELOCITY_SLEEP_THRESHOLD || Math.abs(prize.vy) > VELOCITY_SLEEP_THRESHOLD)) {
-      prize.grounded = false;
-    }
-
-    // Gravity
-    prize.vy += substepGravity;
-
-    // Air drag
-    prize.vx *= AIR_DRAG;
-    prize.vy *= AIR_DRAG;
-
-    // Linear damping — constantly bleeds energy so objects settle
-    prize.vx *= LINEAR_DAMPING;
-    prize.vy *= LINEAR_DAMPING;
-
-    // Additional ground friction when grounded
+    // Grounded objects stay at rest unless strongly disturbed
     if (prize.grounded) {
-      prize.vx *= FRICTION;
-      prize.angularVel *= 0.8;
-      if (Math.abs(prize.vx) < 0.05) prize.vx = 0;
-      if (Math.abs(prize.angularVel) < ANGULAR_SLEEP_THRESHOLD) prize.angularVel = 0;
-      // Grounded objects with negligible velocity stay fully at rest
-      if (Math.abs(prize.vx) < 0.1 && Math.abs(prize.vy) < 0.1) {
+      const speed = Math.sqrt(prize.vx * prize.vx + prize.vy * prize.vy);
+      if (speed > 3.0) {
+        prize.grounded = false;
+      } else {
         prize.vx = 0;
         prize.vy = 0;
         prize.angularVel = 0;
@@ -315,9 +284,18 @@ function physicsStep(
       }
     }
 
-    // Global sleep threshold — kill micro-velocities
-    if (Math.abs(prize.vx) < 0.08) prize.vx = 0;
-    if (Math.abs(prize.vy) < 0.08 && prize.grounded) prize.vy = 0;
+    // Gravity
+    prize.vy += substepGravity;
+
+    // Heavy damping — applied once per frame, not per substep
+    prize.vx *= 0.94;
+    prize.vy *= 0.98;
+    prize.angularVel *= 0.9;
+
+    // Kill micro-velocities aggressively
+    if (Math.abs(prize.vx) < 0.3) prize.vx = 0;
+    if (Math.abs(prize.vy) < 0.3 && prize.vy > 0) prize.vy = 0;
+    if (Math.abs(prize.angularVel) < 0.03) prize.angularVel = 0;
 
     // Integrate position
     prize.x += prize.vx / PHYSICS_SUBSTEPS;
