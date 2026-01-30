@@ -271,16 +271,31 @@ function physicsStep(
   for (const prize of prizes) {
     if (prize.grabbed) continue;
 
-    // Grounded objects stay at rest unless strongly disturbed
+    // Grounded objects stay at rest unless disturbed or floating
     if (prize.grounded) {
-      const speed = Math.sqrt(prize.vx * prize.vx + prize.vy * prize.vy);
-      if (speed > 3.0) {
+      const floorY = mb - 12 - PRIZE_RADIUS;
+      const isNearFloor = prize.y >= floorY - 5;
+      // Check if supported by another prize below
+      const isSupported = isNearFloor || prizes.some(other => 
+        other !== prize && !other.grabbed &&
+        Math.abs(other.x - prize.x) < PRIZE_RADIUS * 2 &&
+        other.y > prize.y &&
+        other.y - prize.y < PRIZE_RADIUS * 2.5
+      );
+      
+      if (!isSupported) {
+        // Floating! Wake up and fall
         prize.grounded = false;
       } else {
-        prize.vx = 0;
-        prize.vy = 0;
-        prize.angularVel = 0;
-        continue;
+        const speed = Math.sqrt(prize.vx * prize.vx + prize.vy * prize.vy);
+        if (speed > 3.0) {
+          prize.grounded = false;
+        } else {
+          prize.vx = 0;
+          prize.vy = 0;
+          prize.angularVel = 0;
+          continue;
+        }
       }
     }
 
