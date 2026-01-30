@@ -8,6 +8,7 @@ import {
   AIR_DRAG, ANGULAR_DRAG, GROUND_FRICTION,
   VELOCITY_SLEEP_THRESHOLD, ANGULAR_SLEEP_THRESHOLD,
   PHYSICS_SUBSTEPS, COLLISION_SLOP, COLLISION_BIAS,
+  LINEAR_DAMPING,
   CLAW_SPEED, DROP_ACCEL, DROP_MAX_SPEED, RETURN_SPEED,
   SWING_DAMPING, SWING_FORCE, CABLE_TOP, CLAW_CLOSE_TIME,
   CLAW_BODY_RADIUS, CLAW_PUSH_FORCE,
@@ -22,22 +23,22 @@ function generatePrizes(ml: number, mr: number, mb: number): Prize[] {
   const count = 14;
   for (let i = 0; i < count; i++) {
     const type = PRIZE_TYPES[Math.floor(Math.random() * PRIZE_TYPES.length)];
-    // Spawn prizes spread across the top half so they fall and settle
+    // Spawn prizes spread across the area — they fall and settle quickly
     prizes.push({
       id: generateId(),
       type,
       x: ml + 40 + Math.random() * (mr - ml - 80),
-      y: mb - 180 - Math.random() * 120,
-      vx: (Math.random() - 0.5) * 3,
-      vy: Math.random() * 2,
+      y: mb - 100 - Math.random() * 80,
+      vx: (Math.random() - 0.5) * 0.5,
+      vy: Math.random() * 0.5,
       width: 32,
       height: 32,
       rotation: (Math.random() - 0.5) * Math.PI * 2,
-      angularVel: (Math.random() - 0.5) * 0.15,
+      angularVel: (Math.random() - 0.5) * 0.03,
       grabbed: false,
       grounded: false,
       mass: 0.8 + Math.random() * 0.4,
-      restitution: 0.3 + Math.random() * 0.2,
+      restitution: 0.05 + Math.random() * 0.05,
       glowPhase: Math.random() * Math.PI * 2,
     });
   }
@@ -146,8 +147,8 @@ function resolvePrizePrizeCollision(a: Prize, b: Prize) {
   // Only resolve if objects are moving toward each other
   if (relVelNormal <= 0) return;
 
-  // Coefficient of restitution (average)
-  const e = (a.restitution + b.restitution) * 0.5;
+  // Coefficient of restitution (use minimum for less bounce)
+  const e = Math.min(a.restitution, b.restitution);
 
   // Impulse scalar
   const j = -(1 + e) * relVelNormal / (1 / a.mass + 1 / b.mass);
@@ -158,11 +159,17 @@ function resolvePrizePrizeCollision(a: Prize, b: Prize) {
   b.vx += (j / b.mass) * nx;
   b.vy += (j / b.mass) * ny;
 
+  // Post-collision damping — absorb energy on contact
+  a.vx *= 0.85;
+  a.vy *= 0.85;
+  b.vx *= 0.85;
+  b.vy *= 0.85;
+
   // Tangential friction impulse (makes objects spin on contact)
   const tangentX = -ny;
   const tangentY = nx;
   const relVelTangent = dvx * tangentX + dvy * tangentY;
-  const frictionCoeff = 0.3;
+  const frictionCoeff = 0.5;
   const jt = -relVelTangent * frictionCoeff / (1 / a.mass + 1 / b.mass);
 
   a.vx -= (jt / a.mass) * tangentX;
@@ -170,9 +177,9 @@ function resolvePrizePrizeCollision(a: Prize, b: Prize) {
   b.vx += (jt / b.mass) * tangentX;
   b.vy += (jt / b.mass) * tangentY;
 
-  // Angular velocity from tangential impulse
-  a.angularVel += jt / (a.mass * PRIZE_RADIUS) * 0.15;
-  b.angularVel -= jt / (b.mass * PRIZE_RADIUS) * 0.15;
+  // Angular velocity from tangential impulse (reduced)
+  a.angularVel += jt / (a.mass * PRIZE_RADIUS) * 0.05;
+  b.angularVel -= jt / (b.mass * PRIZE_RADIUS) * 0.05;
 }
 
 /** Resolve collision between claw body and a prize */
@@ -203,11 +210,13 @@ function resolveClawPrizeCollision(
 
   if (relVelNormal <= 0) return;
 
-  // Full impulse transfer to prize (claw is immovable)
+  // Gentle impulse transfer to prize (claw nudges, doesn't launch)
   const impulse = relVelNormal * CLAW_PUSH_FORCE;
-  prize.vx += nx * impulse;
-  prize.vy += ny * impulse;
-  prize.angularVel += (nx * 0.5 - ny * 0.3) * impulse * 0.05;
+  const maxImpulse = 2.0;
+  const clampedImpulse = Math.min(impulse, maxImpulse);
+  prize.vx += nx * clampedImpulse;
+  prize.vy += ny * clampedImpulse;
+  prize.angularVel += (nx * 0.5 - ny * 0.3) * clampedImpulse * 0.02;
   prize.grounded = false;
 }
 
@@ -221,15 +230,25 @@ function applyBoundaries(prize: Prize, ml: number, mr: number, mb: number) {
   if (prize.y > floorY - PRIZE_RADIUS) {
     prize.y = floorY - PRIZE_RADIUS;
     if (prize.vy > 0) {
-      prize.vy = -prize.vy * prize.restitution;
-      // Rolling friction
-      prize.vx *= GROUND_FRICTION;
-      prize.angularVel += prize.vx * 0.02; // rolling effect
-      prize.angularVel *= 0.85;
-
-      if (Math.abs(prize.vy) < VELOCITY_SLEEP_THRESHOLD && Math.abs(prize.vx) < VELOCITY_SLEEP_THRESHOLD) {
+      // Only bounce if impact velocity is significant, otherwise just stop
+      if (prize.vy > 1.5) {
+        prize.vy = -prize.vy * prize.restitution;
+      } else {
         prize.vy = 0;
+      }
+      // Strong ground friction
+      prize.vx *= GROUND_FRICTION;
+      prize.angularVel += prize.vx * 0.01;
+      prize.angularVel *= 0.7;
+
+      // Sleep check — if barely moving, come to full rest
+      const speed = Math.abs(prize.vx) + Math.abs(prize.vy);
+      if (speed < VELOCITY_SLEEP_THRESHOLD) {
+        prize.vy = 0;
+        prize.vx *= 0.5;
         prize.grounded = true;
+        if (Math.abs(prize.vx) < 0.1) prize.vx = 0;
+        if (Math.abs(prize.angularVel) < ANGULAR_SLEEP_THRESHOLD) prize.angularVel = 0;
       }
     }
   }
@@ -238,8 +257,8 @@ function applyBoundaries(prize: Prize, ml: number, mr: number, mb: number) {
   if (prize.x < leftWall) {
     prize.x = leftWall;
     if (prize.vx < 0) {
-      prize.vx = -prize.vx * prize.restitution;
-      prize.angularVel -= prize.vy * 0.01;
+      prize.vx = Math.abs(prize.vx) > 1.5 ? -prize.vx * prize.restitution : 0;
+      prize.angularVel *= 0.7;
     }
   }
 
@@ -247,8 +266,8 @@ function applyBoundaries(prize: Prize, ml: number, mr: number, mb: number) {
   if (prize.x > rightWall) {
     prize.x = rightWall;
     if (prize.vx > 0) {
-      prize.vx = -prize.vx * prize.restitution;
-      prize.angularVel += prize.vy * 0.01;
+      prize.vx = Math.abs(prize.vx) > 1.5 ? -prize.vx * prize.restitution : 0;
+      prize.angularVel *= 0.7;
     }
   }
 }
@@ -277,12 +296,28 @@ function physicsStep(
     prize.vx *= AIR_DRAG;
     prize.vy *= AIR_DRAG;
 
+    // Linear damping — constantly bleeds energy so objects settle
+    prize.vx *= LINEAR_DAMPING;
+    prize.vy *= LINEAR_DAMPING;
+
     // Additional ground friction when grounded
     if (prize.grounded) {
       prize.vx *= FRICTION;
+      prize.angularVel *= 0.8;
       if (Math.abs(prize.vx) < 0.05) prize.vx = 0;
       if (Math.abs(prize.angularVel) < ANGULAR_SLEEP_THRESHOLD) prize.angularVel = 0;
+      // Grounded objects with negligible velocity stay fully at rest
+      if (Math.abs(prize.vx) < 0.1 && Math.abs(prize.vy) < 0.1) {
+        prize.vx = 0;
+        prize.vy = 0;
+        prize.angularVel = 0;
+        continue;
+      }
     }
+
+    // Global sleep threshold — kill micro-velocities
+    if (Math.abs(prize.vx) < 0.08) prize.vx = 0;
+    if (Math.abs(prize.vy) < 0.08 && prize.grounded) prize.vy = 0;
 
     // Integrate position
     prize.x += prize.vx / PHYSICS_SUBSTEPS;
@@ -996,17 +1031,17 @@ export default function ClawMachine() {
         // Spawn impact bubbles
         spawnBubbles(g.particles, clawCenterX, claw.y + 25, 6);
 
-        // Impact: push nearby prizes outward from claw landing point
+        // Impact: gently nudge nearby prizes outward from claw landing point
         for (const prize of g.prizes) {
           if (prize.grabbed) continue;
           const dx = prize.x - clawCenterX;
           const dy = prize.y - (claw.y + 28);
           const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < PRIZE_RADIUS * 3 && dist > 0) {
-            const force = (1 - dist / (PRIZE_RADIUS * 3)) * 4;
+          if (dist < PRIZE_RADIUS * 2.5 && dist > 0) {
+            const force = (1 - dist / (PRIZE_RADIUS * 2.5)) * 1.2;
             prize.vx += (dx / dist) * force;
-            prize.vy += (dy / dist) * force - 1;
-            prize.angularVel += (Math.random() - 0.5) * 0.3;
+            prize.vy += (dy / dist) * force * 0.5;
+            prize.angularVel += (Math.random() - 0.5) * 0.05;
             prize.grounded = false;
           }
         }

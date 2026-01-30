@@ -74,18 +74,19 @@ export const PRIZE_INFO: Record<PrizeType, { emoji: string; label: string; point
 export const PRIZE_TYPES: PrizeType[] = ['lobster', 'treasure', 'duck', 'starfish', 'pearl'];
 
 // Physics constants
-export const GRAVITY = 0.45;
-export const FRICTION = 0.82;
-export const BOUNCE = 0.35;
+export const GRAVITY = 0.5;
+export const FRICTION = 0.4;
+export const BOUNCE = 0.05;
 export const PRIZE_RADIUS = 16;
-export const AIR_DRAG = 0.998;
-export const ANGULAR_DRAG = 0.96;
-export const GROUND_FRICTION = 0.88;
-export const VELOCITY_SLEEP_THRESHOLD = 0.3;
-export const ANGULAR_SLEEP_THRESHOLD = 0.01;
-export const PHYSICS_SUBSTEPS = 3;
+export const AIR_DRAG = 0.98;
+export const ANGULAR_DRAG = 0.9;
+export const GROUND_FRICTION = 0.5;
+export const VELOCITY_SLEEP_THRESHOLD = 0.5;
+export const ANGULAR_SLEEP_THRESHOLD = 0.02;
+export const PHYSICS_SUBSTEPS = 4;
 export const COLLISION_SLOP = 0.5;
-export const COLLISION_BIAS = 0.3;
+export const COLLISION_BIAS = 0.4;
+export const LINEAR_DAMPING = 0.96;
 
 // Claw constants
 export const CLAW_SPEED = 3.5;
@@ -97,4 +98,4 @@ export const SWING_FORCE = 0.025;
 export const CABLE_TOP = 30;
 export const CLAW_CLOSE_TIME = 18;
 export const CLAW_BODY_RADIUS = 14;
-export const CLAW_PUSH_FORCE = 3.5;
+export const CLAW_PUSH_FORCE = 1.2;
