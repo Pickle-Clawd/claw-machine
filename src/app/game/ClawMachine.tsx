@@ -1048,9 +1048,10 @@ export default function ClawMachine() {
               16
             );
           } else {
-            // Grab fails — claw slips off
-            closestPrize.vy += 1;
+            // Grab fails — prize slips and floats down gently
             closestPrize.grounded = false;
+            closestPrize.vy = 0.5;
+            closestPrize.vx = (Math.random() - 0.5) * 0.5;
           }
         }
 
@@ -1068,8 +1069,8 @@ export default function ClawMachine() {
         const dropped = claw.grabbedPrize;
         dropped.grabbed = false;
         dropped.grounded = false;
-        dropped.vy = 2;
-        dropped.vx = (Math.random() - 0.5) * 2;
+        dropped.vy = 0.5;
+        dropped.vx = (Math.random() - 0.5) * 0.5;
         claw.grabbedPrize = null;
       }
 
