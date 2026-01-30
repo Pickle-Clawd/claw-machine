@@ -320,13 +320,7 @@ function physicsStep(
     }
   }
 
-  // Claw-to-prize collisions (when claw is actively moving through prizes)
-  if (clawActive) {
-    for (const prize of prizes) {
-      if (prize.grabbed) continue;
-      resolveClawPrizeCollision(clawX, clawY, clawVx, clawVy, prize);
-    }
-  }
+  // Claw-to-prize collisions disabled — claw phases through prizes to avoid pushing them away
 }
 
 // ============================================================
@@ -395,7 +389,7 @@ export default function ClawMachine() {
       swingAngle: 0,
       swingSpeed: 0,
       grabbedPrize: null,
-      dropY: machineBottom - 25,
+      dropY: machineBottom - 80,
       dropSpeed: 0,
       closingTimer: 0,
       prevY: machineTop + 45,
@@ -1009,19 +1003,7 @@ export default function ClawMachine() {
         // Spawn impact bubbles
         spawnBubbles(g.particles, clawCenterX, claw.y + 25, 6);
 
-        // Gentle nudge — only push prizes that are to the SIDE of the claw, not directly below
-        for (const prize of g.prizes) {
-          if (prize.grabbed) continue;
-          const dx = prize.x - clawCenterX;
-          const dy = prize.y - (claw.y + 28);
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          // Only nudge prizes that are mostly to the side (not directly under the claw)
-          if (dist < PRIZE_RADIUS * 2 && dist > 0 && Math.abs(dx) > PRIZE_RADIUS) {
-            const force = (1 - dist / (PRIZE_RADIUS * 2)) * 0.4;
-            prize.vx += (dx / dist) * force;
-            prize.grounded = false;
-          }
-        }
+        // No impact nudge — claw stops above the pile
       }
     }
 
