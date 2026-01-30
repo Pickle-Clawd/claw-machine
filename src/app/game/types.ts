@@ -98,4 +98,4 @@ export const SWING_FORCE = 0.025;
 export const CABLE_TOP = 30;
 export const CLAW_CLOSE_TIME = 18;
 export const CLAW_BODY_RADIUS = 14;
-export const CLAW_PUSH_FORCE = 1.2;
+export const CLAW_PUSH_FORCE = 0.3;

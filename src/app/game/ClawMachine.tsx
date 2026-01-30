@@ -212,7 +212,7 @@ function resolveClawPrizeCollision(
 
   // Gentle impulse transfer to prize (claw nudges, doesn't launch)
   const impulse = relVelNormal * CLAW_PUSH_FORCE;
-  const maxImpulse = 2.0;
+  const maxImpulse = 0.5;
   const clampedImpulse = Math.min(impulse, maxImpulse);
   prize.vx += nx * clampedImpulse;
   prize.vy += ny * clampedImpulse;
@@ -1009,17 +1009,16 @@ export default function ClawMachine() {
         // Spawn impact bubbles
         spawnBubbles(g.particles, clawCenterX, claw.y + 25, 6);
 
-        // Impact: gently nudge nearby prizes outward from claw landing point
+        // Gentle nudge — only push prizes that are to the SIDE of the claw, not directly below
         for (const prize of g.prizes) {
           if (prize.grabbed) continue;
           const dx = prize.x - clawCenterX;
           const dy = prize.y - (claw.y + 28);
           const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < PRIZE_RADIUS * 2.5 && dist > 0) {
-            const force = (1 - dist / (PRIZE_RADIUS * 2.5)) * 1.2;
+          // Only nudge prizes that are mostly to the side (not directly under the claw)
+          if (dist < PRIZE_RADIUS * 2 && dist > 0 && Math.abs(dx) > PRIZE_RADIUS) {
+            const force = (1 - dist / (PRIZE_RADIUS * 2)) * 0.4;
             prize.vx += (dx / dist) * force;
-            prize.vy += (dy / dist) * force * 0.5;
-            prize.angularVel += (Math.random() - 0.5) * 0.05;
             prize.grounded = false;
           }
         }
@@ -1038,7 +1037,7 @@ export default function ClawMachine() {
 
         let closestPrize: Prize | null = null;
         let closestDist = Infinity;
-        const grabRadius = 30;
+        const grabRadius = 40;
 
         for (const prize of g.prizes) {
           if (prize.grabbed) continue;
