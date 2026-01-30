@@ -389,7 +389,7 @@ export default function ClawMachine() {
       swingAngle: 0,
       swingSpeed: 0,
       grabbedPrize: null,
-      dropY: machineBottom - 80,
+      dropY: machineBottom - 40,
       dropSpeed: 0,
       closingTimer: 0,
       prevY: machineTop + 45,
