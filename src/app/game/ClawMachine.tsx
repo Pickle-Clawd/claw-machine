@@ -5,8 +5,12 @@ import {
   Prize, PrizeType, Particle, ClawState,
   PRIZE_INFO, PRIZE_TYPES,
   GRAVITY, FRICTION, BOUNCE, PRIZE_RADIUS,
+  AIR_DRAG, ANGULAR_DRAG, GROUND_FRICTION,
+  VELOCITY_SLEEP_THRESHOLD, ANGULAR_SLEEP_THRESHOLD,
+  PHYSICS_SUBSTEPS, COLLISION_SLOP, COLLISION_BIAS,
   CLAW_SPEED, DROP_ACCEL, DROP_MAX_SPEED, RETURN_SPEED,
   SWING_DAMPING, SWING_FORCE, CABLE_TOP, CLAW_CLOSE_TIME,
+  CLAW_BODY_RADIUS, CLAW_PUSH_FORCE,
 } from './types';
 
 function generateId() {
@@ -15,24 +19,25 @@ function generateId() {
 
 function generatePrizes(ml: number, mr: number, mb: number): Prize[] {
   const prizes: Prize[] = [];
-  const floorY = mb - 10;
   const count = 14;
   for (let i = 0; i < count; i++) {
     const type = PRIZE_TYPES[Math.floor(Math.random() * PRIZE_TYPES.length)];
+    // Spawn prizes spread across the top half so they fall and settle
     prizes.push({
       id: generateId(),
       type,
       x: ml + 40 + Math.random() * (mr - ml - 80),
-      y: floorY - 20 - Math.random() * 80,
-      vx: (Math.random() - 0.5) * 2,
-      vy: 0,
+      y: mb - 180 - Math.random() * 120,
+      vx: (Math.random() - 0.5) * 3,
+      vy: Math.random() * 2,
       width: 32,
       height: 32,
-      rotation: (Math.random() - 0.5) * 0.6,
-      angularVel: 0,
+      rotation: (Math.random() - 0.5) * Math.PI * 2,
+      angularVel: (Math.random() - 0.5) * 0.15,
       grabbed: false,
       grounded: false,
       mass: 0.8 + Math.random() * 0.4,
+      restitution: 0.3 + Math.random() * 0.2,
       glowPhase: Math.random() * Math.PI * 2,
     });
   }
@@ -108,6 +113,213 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+// ============================================================
+// PHYSICS ENGINE
+// ============================================================
+
+/** Resolve circle-circle collision between two prizes using mass-weighted impulse */
+function resolvePrizePrizeCollision(a: Prize, b: Prize) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const distSq = dx * dx + dy * dy;
+  const minDist = PRIZE_RADIUS * 2;
+  if (distSq >= minDist * minDist || distSq === 0) return;
+
+  const dist = Math.sqrt(distSq);
+  const nx = dx / dist;
+  const ny = dy / dist;
+
+  // Positional correction (push apart) — biased to avoid sinking
+  const overlap = minDist - dist;
+  const correction = Math.max(overlap - COLLISION_SLOP, 0) * COLLISION_BIAS;
+  const totalMass = a.mass + b.mass;
+  a.x -= nx * correction * (b.mass / totalMass);
+  a.y -= ny * correction * (b.mass / totalMass);
+  b.x += nx * correction * (a.mass / totalMass);
+  b.y += ny * correction * (a.mass / totalMass);
+
+  // Relative velocity along collision normal
+  const dvx = a.vx - b.vx;
+  const dvy = a.vy - b.vy;
+  const relVelNormal = dvx * nx + dvy * ny;
+
+  // Only resolve if objects are moving toward each other
+  if (relVelNormal <= 0) return;
+
+  // Coefficient of restitution (average)
+  const e = (a.restitution + b.restitution) * 0.5;
+
+  // Impulse scalar
+  const j = -(1 + e) * relVelNormal / (1 / a.mass + 1 / b.mass);
+
+  // Apply impulse
+  a.vx -= (j / a.mass) * nx;
+  a.vy -= (j / a.mass) * ny;
+  b.vx += (j / b.mass) * nx;
+  b.vy += (j / b.mass) * ny;
+
+  // Tangential friction impulse (makes objects spin on contact)
+  const tangentX = -ny;
+  const tangentY = nx;
+  const relVelTangent = dvx * tangentX + dvy * tangentY;
+  const frictionCoeff = 0.3;
+  const jt = -relVelTangent * frictionCoeff / (1 / a.mass + 1 / b.mass);
+
+  a.vx -= (jt / a.mass) * tangentX;
+  a.vy -= (jt / a.mass) * tangentY;
+  b.vx += (jt / b.mass) * tangentX;
+  b.vy += (jt / b.mass) * tangentY;
+
+  // Angular velocity from tangential impulse
+  a.angularVel += jt / (a.mass * PRIZE_RADIUS) * 0.15;
+  b.angularVel -= jt / (b.mass * PRIZE_RADIUS) * 0.15;
+}
+
+/** Resolve collision between claw body and a prize */
+function resolveClawPrizeCollision(
+  clawX: number, clawY: number, clawVx: number, clawVy: number,
+  prize: Prize
+) {
+  const clawTipY = clawY + 28;
+  const dx = prize.x - clawX;
+  const dy = prize.y - clawTipY;
+  const distSq = dx * dx + dy * dy;
+  const minDist = PRIZE_RADIUS + CLAW_BODY_RADIUS;
+  if (distSq >= minDist * minDist || distSq === 0) return;
+
+  const dist = Math.sqrt(distSq);
+  const nx = dx / dist;
+  const ny = dy / dist;
+
+  // Push prize out of claw
+  const overlap = minDist - dist;
+  prize.x += nx * overlap;
+  prize.y += ny * overlap;
+
+  // Relative velocity (claw is kinematic — infinite mass)
+  const dvx = clawVx - prize.vx;
+  const dvy = clawVy - prize.vy;
+  const relVelNormal = dvx * nx + dvy * ny;
+
+  if (relVelNormal <= 0) return;
+
+  // Full impulse transfer to prize (claw is immovable)
+  const impulse = relVelNormal * CLAW_PUSH_FORCE;
+  prize.vx += nx * impulse;
+  prize.vy += ny * impulse;
+  prize.angularVel += (nx * 0.5 - ny * 0.3) * impulse * 0.05;
+  prize.grounded = false;
+}
+
+/** Apply wall and floor boundary constraints */
+function applyBoundaries(prize: Prize, ml: number, mr: number, mb: number) {
+  const floorY = mb - 12;
+  const leftWall = ml + PRIZE_RADIUS + 5;
+  const rightWall = mr - PRIZE_RADIUS - 5;
+
+  // Floor
+  if (prize.y > floorY - PRIZE_RADIUS) {
+    prize.y = floorY - PRIZE_RADIUS;
+    if (prize.vy > 0) {
+      prize.vy = -prize.vy * prize.restitution;
+      // Rolling friction
+      prize.vx *= GROUND_FRICTION;
+      prize.angularVel += prize.vx * 0.02; // rolling effect
+      prize.angularVel *= 0.85;
+
+      if (Math.abs(prize.vy) < VELOCITY_SLEEP_THRESHOLD && Math.abs(prize.vx) < VELOCITY_SLEEP_THRESHOLD) {
+        prize.vy = 0;
+        prize.grounded = true;
+      }
+    }
+  }
+
+  // Left wall
+  if (prize.x < leftWall) {
+    prize.x = leftWall;
+    if (prize.vx < 0) {
+      prize.vx = -prize.vx * prize.restitution;
+      prize.angularVel -= prize.vy * 0.01;
+    }
+  }
+
+  // Right wall
+  if (prize.x > rightWall) {
+    prize.x = rightWall;
+    if (prize.vx > 0) {
+      prize.vx = -prize.vx * prize.restitution;
+      prize.angularVel += prize.vy * 0.01;
+    }
+  }
+}
+
+/** Run one sub-step of physics for all prizes */
+function physicsStep(
+  prizes: Prize[],
+  ml: number, mr: number, mb: number,
+  clawX: number, clawY: number, clawVx: number, clawVy: number,
+  clawActive: boolean,
+) {
+  const substepGravity = GRAVITY / PHYSICS_SUBSTEPS;
+
+  for (const prize of prizes) {
+    if (prize.grabbed) continue;
+
+    // Wake up grounded objects if they have velocity (e.g. from collision)
+    if (prize.grounded && (Math.abs(prize.vx) > VELOCITY_SLEEP_THRESHOLD || Math.abs(prize.vy) > VELOCITY_SLEEP_THRESHOLD)) {
+      prize.grounded = false;
+    }
+
+    // Gravity
+    prize.vy += substepGravity;
+
+    // Air drag
+    prize.vx *= AIR_DRAG;
+    prize.vy *= AIR_DRAG;
+
+    // Additional ground friction when grounded
+    if (prize.grounded) {
+      prize.vx *= FRICTION;
+      if (Math.abs(prize.vx) < 0.05) prize.vx = 0;
+      if (Math.abs(prize.angularVel) < ANGULAR_SLEEP_THRESHOLD) prize.angularVel = 0;
+    }
+
+    // Integrate position
+    prize.x += prize.vx / PHYSICS_SUBSTEPS;
+    prize.y += prize.vy / PHYSICS_SUBSTEPS;
+
+    // Rotation
+    prize.rotation += prize.angularVel / PHYSICS_SUBSTEPS;
+    prize.angularVel *= ANGULAR_DRAG;
+
+    // Boundaries
+    applyBoundaries(prize, ml, mr, mb);
+  }
+
+  // Prize-to-prize collisions
+  for (let i = 0; i < prizes.length; i++) {
+    const a = prizes[i];
+    if (a.grabbed) continue;
+    for (let j = i + 1; j < prizes.length; j++) {
+      const b = prizes[j];
+      if (b.grabbed) continue;
+      resolvePrizePrizeCollision(a, b);
+    }
+  }
+
+  // Claw-to-prize collisions (when claw is actively moving through prizes)
+  if (clawActive) {
+    for (const prize of prizes) {
+      if (prize.grabbed) continue;
+      resolveClawPrizeCollision(clawX, clawY, clawVx, clawVy, prize);
+    }
+  }
+}
+
+// ============================================================
+// COMPONENT
+// ============================================================
+
 export default function ClawMachine() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<{
@@ -128,6 +340,7 @@ export default function ClawMachine() {
     time: number;
     shakeTimer: number;
     shakeIntensity: number;
+    lastTimestamp: number;
   } | null>(null);
   const animFrameRef = useRef<number>(0);
   const keysRef = useRef<Set<string>>(new Set());
@@ -172,6 +385,7 @@ export default function ClawMachine() {
       dropY: machineBottom - 25,
       dropSpeed: 0,
       closingTimer: 0,
+      prevY: machineTop + 45,
     };
 
     gameRef.current = {
@@ -192,6 +406,7 @@ export default function ClawMachine() {
       time: 0,
       shakeTimer: 0,
       shakeIntensity: 0,
+      lastTimestamp: 0,
     };
 
     setScore(saved.score);
@@ -215,6 +430,7 @@ export default function ClawMachine() {
     g.claw.openAmount = 1;
     g.claw.dropSpeed = 0;
     g.claw.closingTimer = 0;
+    g.claw.prevY = g.claw.y;
     setCanDrop(false);
   }, []);
 
@@ -713,9 +929,15 @@ export default function ClawMachine() {
 
   // --- UPDATE / PHYSICS ---
 
-  const update = useCallback(() => {
+  const update = useCallback((timestamp: number) => {
     const g = gameRef.current;
     if (!g) return;
+
+    // Delta time calculation (capped to prevent spiral of death)
+    if (g.lastTimestamp === 0) g.lastTimestamp = timestamp;
+    const rawDt = (timestamp - g.lastTimestamp) / 16.667; // normalize to 60fps
+    const dt = Math.min(rawDt, 3); // cap at 3 frames worth
+    g.lastTimestamp = timestamp;
 
     const { claw } = g;
     const keys = keysRef.current;
@@ -734,7 +956,7 @@ export default function ClawMachine() {
 
     // Move claw horizontally (only when idle)
     if (!claw.dropping && !claw.returning && !claw.grabbing && dir !== 0) {
-      claw.x += dir * CLAW_SPEED;
+      claw.x += dir * CLAW_SPEED * dt;
       claw.x = Math.max(g.machineLeft + 30, Math.min(g.machineRight - 50, claw.x));
       claw.swingSpeed += dir * SWING_FORCE;
     }
@@ -750,28 +972,16 @@ export default function ClawMachine() {
     const targetOpen = claw.open ? 1 : 0;
     claw.openAmount += (targetOpen - claw.openAmount) * 0.15;
 
+    // Track claw velocity for physics interactions
+    const swingOffset = Math.sin(claw.swingAngle) * (claw.y - (g.machineTop + CABLE_TOP)) * 0.06;
+    const clawCenterX = claw.x + swingOffset;
+    const clawVy = claw.y - claw.prevY;
+    claw.prevY = claw.y;
+
     // --- DROP PHASE (with acceleration) ---
     if (claw.dropping) {
-      claw.dropSpeed = Math.min(claw.dropSpeed + DROP_ACCEL, DROP_MAX_SPEED);
-      claw.y += claw.dropSpeed;
-
-      // Check if claw hits any prizes on the way down (push them aside)
-      const swingOffset = Math.sin(claw.swingAngle) * (claw.y - (g.machineTop + CABLE_TOP)) * 0.06;
-      const clawCenterX = claw.x + swingOffset;
-      const clawBottomY = claw.y + 28;
-      for (const prize of g.prizes) {
-        if (prize.grabbed) continue;
-        const dx = prize.x - clawCenterX;
-        const dy = prize.y - clawBottomY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < PRIZE_RADIUS + 12 && dist > 0) {
-          // Push prize sideways
-          prize.vx += (dx / dist) * 2;
-          prize.vy += Math.abs(claw.dropSpeed) * 0.3;
-          prize.angularVel += (Math.random() - 0.5) * 0.1;
-          prize.grounded = false;
-        }
-      }
+      claw.dropSpeed = Math.min(claw.dropSpeed + DROP_ACCEL * dt, DROP_MAX_SPEED);
+      claw.y += claw.dropSpeed * dt;
 
       if (claw.y >= claw.dropY) {
         claw.y = claw.dropY;
@@ -785,6 +995,21 @@ export default function ClawMachine() {
 
         // Spawn impact bubbles
         spawnBubbles(g.particles, clawCenterX, claw.y + 25, 6);
+
+        // Impact: push nearby prizes outward from claw landing point
+        for (const prize of g.prizes) {
+          if (prize.grabbed) continue;
+          const dx = prize.x - clawCenterX;
+          const dy = prize.y - (claw.y + 28);
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < PRIZE_RADIUS * 3 && dist > 0) {
+            const force = (1 - dist / (PRIZE_RADIUS * 3)) * 4;
+            prize.vx += (dx / dist) * force;
+            prize.vy += (dy / dist) * force - 1;
+            prize.angularVel += (Math.random() - 0.5) * 0.3;
+            prize.grounded = false;
+          }
+        }
       }
     }
 
@@ -795,7 +1020,6 @@ export default function ClawMachine() {
         claw.grabbing = true;
 
         // Collision detection for grab
-        const swingOffset = Math.sin(claw.swingAngle) * (claw.y - (g.machineTop + CABLE_TOP)) * 0.06;
         const tipX = claw.x + swingOffset;
         const tipY = claw.y + 28;
 
@@ -815,7 +1039,7 @@ export default function ClawMachine() {
         }
 
         if (closestPrize) {
-          // Grab succeeds! (deterministic — if you're on it, you get it)
+          // Grab succeeds!
           closestPrize.grabbed = true;
           claw.grabbedPrize = closestPrize;
 
@@ -836,7 +1060,7 @@ export default function ClawMachine() {
 
     // --- RETURN PHASE ---
     if (claw.returning) {
-      claw.y -= RETURN_SPEED;
+      claw.y -= RETURN_SPEED * dt;
 
       if (claw.y <= g.machineTop + 45) {
         claw.y = g.machineTop + 45;
@@ -845,7 +1069,7 @@ export default function ClawMachine() {
           // Move toward chute
           const chuteX = g.machineRight - 32;
           if (Math.abs(claw.x - chuteX) > 4) {
-            claw.x += (chuteX > claw.x ? 1 : -1) * CLAW_SPEED;
+            claw.x += (chuteX > claw.x ? 1 : -1) * CLAW_SPEED * dt;
             // Keep returning (don't finish yet)
           } else {
             // Prize collected!
@@ -876,85 +1100,15 @@ export default function ClawMachine() {
       }
     }
 
-    // --- PRIZE PHYSICS ---
-    const floorY = g.machineBottom - 12;
-    for (const prize of g.prizes) {
-      if (prize.grabbed) continue;
-
-      // Apply gravity
-      prize.vy += GRAVITY;
-
-      // Apply velocity
-      prize.x += prize.vx;
-      prize.y += prize.vy;
-      prize.rotation += prize.angularVel;
-
-      // Friction on angular velocity
-      prize.angularVel *= 0.95;
-
-      // Floor collision
-      if (prize.y > floorY - PRIZE_RADIUS) {
-        prize.y = floorY - PRIZE_RADIUS;
-        prize.vy = -prize.vy * BOUNCE;
-        prize.vx *= FRICTION;
-        prize.angularVel *= 0.8;
-        if (Math.abs(prize.vy) < 0.5) {
-          prize.vy = 0;
-          prize.grounded = true;
-        }
-      }
-
-      // Wall collisions
-      if (prize.x < g.machineLeft + PRIZE_RADIUS + 5) {
-        prize.x = g.machineLeft + PRIZE_RADIUS + 5;
-        prize.vx = -prize.vx * BOUNCE;
-      }
-      if (prize.x > g.machineRight - PRIZE_RADIUS - 5) {
-        prize.x = g.machineRight - PRIZE_RADIUS - 5;
-        prize.vx = -prize.vx * BOUNCE;
-      }
-
-      // Horizontal friction when grounded
-      if (prize.grounded) {
-        prize.vx *= 0.9;
-        if (Math.abs(prize.vx) < 0.1) prize.vx = 0;
-      }
-    }
-
-    // Prize-to-prize collision
-    for (let i = 0; i < g.prizes.length; i++) {
-      const a = g.prizes[i];
-      if (a.grabbed) continue;
-      for (let j = i + 1; j < g.prizes.length; j++) {
-        const b = g.prizes[j];
-        if (b.grabbed) continue;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const minDist = PRIZE_RADIUS * 2;
-        if (dist < minDist && dist > 0) {
-          const overlap = minDist - dist;
-          const nx = dx / dist;
-          const ny = dy / dist;
-          // Separate
-          a.x -= nx * overlap * 0.5;
-          a.y -= ny * overlap * 0.5;
-          b.x += nx * overlap * 0.5;
-          b.y += ny * overlap * 0.5;
-          // Bounce
-          const dvx = a.vx - b.vx;
-          const dvy = a.vy - b.vy;
-          const dot = dvx * nx + dvy * ny;
-          if (dot > 0) {
-            a.vx -= nx * dot * 0.5;
-            a.vy -= ny * dot * 0.5;
-            b.vx += nx * dot * 0.5;
-            b.vy += ny * dot * 0.5;
-            a.angularVel += (Math.random() - 0.5) * 0.05;
-            b.angularVel += (Math.random() - 0.5) * 0.05;
-          }
-        }
-      }
+    // --- PHYSICS ENGINE (sub-stepped) ---
+    const clawIsActive = claw.dropping || claw.returning;
+    for (let step = 0; step < PHYSICS_SUBSTEPS; step++) {
+      physicsStep(
+        g.prizes,
+        g.machineLeft, g.machineRight, g.machineBottom,
+        clawCenterX, claw.y, 0, clawVy,
+        clawIsActive,
+      );
     }
 
     // --- PARTICLES UPDATE ---
