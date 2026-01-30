@@ -1033,18 +1033,25 @@ export default function ClawMachine() {
         }
 
         if (closestPrize) {
-          // Grab succeeds!
-          closestPrize.grabbed = true;
-          claw.grabbedPrize = closestPrize;
+          // 40% chance the claw fails to grip — just like a real arcade machine!
+          if (Math.random() < 0.6) {
+            // Grab succeeds!
+            closestPrize.grabbed = true;
+            claw.grabbedPrize = closestPrize;
 
-          // Particles on grab
-          spawnParticles(
-            g.particles,
-            closestPrize.x,
-            closestPrize.y,
-            PRIZE_INFO[closestPrize.type].color,
-            16
-          );
+            // Particles on grab
+            spawnParticles(
+              g.particles,
+              closestPrize.x,
+              closestPrize.y,
+              PRIZE_INFO[closestPrize.type].color,
+              16
+            );
+          } else {
+            // Grab fails — claw slips off
+            closestPrize.vy += 1;
+            closestPrize.grounded = false;
+          }
         }
 
         claw.returning = true;
@@ -1055,6 +1062,16 @@ export default function ClawMachine() {
     // --- RETURN PHASE ---
     if (claw.returning) {
       claw.y -= RETURN_SPEED * dt;
+
+      // 1% chance per frame to drop prize during return (like a real machine)
+      if (claw.grabbedPrize && Math.random() < 0.01) {
+        const dropped = claw.grabbedPrize;
+        dropped.grabbed = false;
+        dropped.grounded = false;
+        dropped.vy = 2;
+        dropped.vx = (Math.random() - 0.5) * 2;
+        claw.grabbedPrize = null;
+      }
 
       if (claw.y <= g.machineTop + 45) {
         claw.y = g.machineTop + 45;
